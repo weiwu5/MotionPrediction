@@ -17,10 +17,14 @@ from six.moves import xrange # pylint: disable=redefined-builtin
 
 import data_utils
 import seq2seq_model
+import transformer_model
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
 import argparse
+
+
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 # Learning
 parser = argparse.ArgumentParser(description='Train RNN for human pose estimation')
@@ -61,6 +65,12 @@ parser.add_argument('--size', dest='size',
 parser.add_argument('--num_layers', dest='num_layers',
                   help='Number of layers in the model.',
                   default=1, type=int)
+parser.add_argument('--num_heads', dest='num_heads',
+                  help='Number of heads in the transformer model.',
+                  default=4, type=int)
+parser.add_argument('--dropout', dest='dropout',
+                  help='Dropout in the transformer model.',
+                  default=0.0, type=float)
 parser.add_argument('--seq_length_in', dest='seq_length_in',
                   help='Number of frames to feed into the encoder. 25 fp',
                   default=50, type=int)
@@ -135,6 +145,36 @@ def create_model(actions, sampling=False):
     model.target_seq_len = 100
   return model
 
+def create_modelT(actions, sampling=False):
+  """Create translation model and initialize or load parameters in session."""
+
+  model = transformer_model.TransformerModel(
+      args.architecture,
+      args.seq_length_in if not sampling else 50,
+      args.seq_length_out if not sampling else 100,
+      args.size, # hidden layer size
+      args.num_layers,
+      args.max_gradient_norm,
+      args.batch_size,
+      args.learning_rate,
+      args.learning_rate_decay_factor,
+      args.loss_to_use if not sampling else "sampling_based",
+      len( actions ),
+      args.num_heads,
+      not args.omit_one_hot,
+      args.residual_velocities,
+      args.dropout,
+      dtype=torch.float32)
+
+  if args.load <= 0:
+    return model
+
+  print("Loading model")
+  model = torch.load(train_dir + '/model_' + str(args.load))
+  if sampling:
+    model.source_seq_len = 50
+    model.target_seq_len = 100
+  return model
 
 def train():
   """Train a seq2seq model on human motion"""
@@ -145,11 +185,10 @@ def train():
 
   train_set, test_set, data_mean, data_std, dim_to_ignore, dim_to_use = read_all_data(
     actions, args.seq_length_in, args.seq_length_out, args.data_dir, not args.omit_one_hot )
-
   # Limit TF to take a fraction of the GPU memory
 
   if True:
-    model = create_model(actions, args.sample)
+    model = create_modelT(actions, args.sample)
     if not args.use_cpu:
         model = model.cuda()
 
@@ -189,6 +228,8 @@ def train():
       decoder_outputs = Variable(decoder_outputs)
 
       preds = model(encoder_inputs, decoder_inputs)
+      #print(preds.shape)
+      #print(decoder_outputs.shape)
 
       step_loss = (preds-decoder_outputs)**2
       step_loss = step_loss.mean()
@@ -208,8 +249,7 @@ def train():
       # === step decay ===
       if current_step % args.learning_rate_step == 0:
         args.learning_rate = args.learning_rate*args.learning_rate_decay_factor
-        optimiser = optim.SGD(model.parameters(), lr=args.learning_rate)
-        #optimiser = optim.Adam(model.parameters(), lr=args.learning_rate, betas = (0.9, 0.999))
+        optimiser = optim.Adam(model.parameters(), lr=args.learning_rate, betas = (0.9, 0.999))
         print("Decay learning rate. New value at " + str(args.learning_rate))
 
       #cuda.empty_cache()
@@ -232,7 +272,9 @@ def train():
         decoder_outputs = Variable(decoder_outputs)
   
         preds = model(encoder_inputs, decoder_inputs)
-  
+        #print(preds.shape)
+        #print(decoder_outputs.shape)
+
         step_loss = (preds-decoder_outputs)**2
         step_loss = step_loss.mean()
 
