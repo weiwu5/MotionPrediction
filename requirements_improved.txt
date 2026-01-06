@@ -1,0 +1,14 @@
+# Core dependencies for improved motion prediction models
+torch>=2.0.0
+numpy>=1.21.0
+h5py>=3.0.0
+
+# Optional but recommended
+matplotlib>=3.3.0
+scikit-learn>=0.24.0
+
+# For visualization
+Pillow>=8.0.0
+
+# Development
+pytest>=6.0.0
